@@ -41,21 +41,24 @@ RUN apt-get update && apt-get install -y \
     libgtkglext1 \
     libgtkglext1-dev \
     libjpeg-dev \
-    libtbb-dev \
+    # libtbb-dev \
     libtiff-dev \
-    libvtk9-dev \
+    # libvtk9-dev \
     libwebp-dev \
     python3-dev \
     python3-numpy \
     # qtbase5-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# libvtk9-dev depends on libtbb-dev 
+# this causes a conflict with the Intel MKL installation.
+
 # Install ceres dependencies
-RUN apt-get update && apt-get install -y \
-    libgoogle-glog-dev \
-    libmetis-dev \
-    libsuitesparse-dev \
-    && rm -rf /var/lib/apt/lists/*
+# RUN apt-get update && apt-get install -y \
+#     libgoogle-glog-dev \
+#     libmetis-dev \
+#     libsuitesparse-dev \
+#     && rm -rf /var/lib/apt/lists/*
 
 # Install Intel MKL
 RUN wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
@@ -67,38 +70,60 @@ RUN wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PR
     intel-oneapi-mkl-devel
 
 # Build and install Ceres Solver
-RUN mkdir -p /var/dependencies \
-    && cd /var/dependencies \
-    && git clone --depth 1 --branch 2.2.0 https://github.com/ceres-solver/ceres-solver.git ceres-solver \
-    && cd ceres-solver \
-    && mkdir build \
-    && cd build \
-    && cmake .. \
-    && make -j$(nproc) \
-    # && make test -j$(nproc) \
-    && make install
-
-
-# Install Kokkos
 # RUN mkdir -p /var/dependencies \
 #     && cd /var/dependencies \
-#     && git clone --depth 1 --branch 4.5.01 https://github.com/kokkos/kokkos.git kokkos \
-#     && cd kokkos \
+#     && git clone --depth 1 --branch 2.2.0 https://github.com/ceres-solver/ceres-solver.git ceres-solver \
+#     && cd ceres-solver \
+#     && . /opt/intel/oneapi/setvars.sh \
 #     && cmake -B builddir \
-#         -DCMAKE_CXX_STANDARD=17 \
-#         -DKokkos_ENABLE_OPENMP=ON \
-#         -DKokkos_ARCH_ADA89=ON \
-#         -DKokkos_ENABLE_CUDA=ON \
-#         -DKokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC=ON \
-#         -DKokkos_ARCH_NATIVE=ON \
-#         -DKokkos_ENABLE_DEPRECATED_CODE_4=OFF \
-#         -DKokkos_ENABLE_EXAMPLES=ON \
 #     && cmake --build builddir -- -j$(nproc) \
 #     && cmake --install builddir --prefix /usr/local
 
+# Build and install OpenCV
+RUN mkdir -p /var/dependencies \
+    && cd /var/dependencies \
+    && git clone --depth 1 --branch 4.11.0 https://github.com/opencv/opencv.git opencv \
+    && git clone --depth 1 --branch 4.11.0 https://github.com/opencv/opencv_extra.git \
+    && git clone --depth 1 --branch 4.11.0 https://github.com/opencv/opencv_contrib.git \
+    && cd opencv \
+    && cmake \
+        -D CMAKE_BUILD_TYPE=Release \
+        -D ENABLE_FAST_MATH=ON \
+        -D CUDA_FAST_MATH=ON \
+        -D WITH_CUBLAS=ON \
+        -D WITH_CUDA=ON \
+        -D OPENCV_DNN_CUDA=ON \
+        -D WITH_OPENGL=ON \
+        -D WITH_TBB=ON \
+        -D WITH_GSTREAMER=ON \
+        -D WITH_GTK=ON \
+        -D WITH_GTK_2_X=ON \
+        -D WITH_QT=OFF \
+        -D WITH_VTK=OFF \
+        -D BUILD_opencv_cudacodec=ON \
+        -D WITH_NVCUVID=OFF \
+        -D WITH_NVCUVENC=OFF \
+        -D BUILD_EXAMPLES=ON \
+        -D BUILD_TESTS=ON \
+        -D MKL_ROOT_DIR=/opt/intel/oneapi/mkl/latest \
+        -D MKL_WITH_TBB=ON \
+        -D OPENCV_EXTRA_MODULES_PATH=../opencv_contrib/modules \
+        -B builddir \
+    && cmake --build builddir -- -j$(nproc) \
+    && cmake --install builddir --prefix /usr/local
+
 # Create a non-root user with sudo privileges
+# Remove conflicting user/group
+RUN if getent passwd ${USER_UID}; then \
+      userdel -f $(getent passwd ${USER_UID} | cut -d: -f1); \
+    fi \
+    && if getent group ${USER_GID}; then \
+      groupdel $(getent group ${USER_GID} | cut -d: -f1); \
+    fi
+
+# Create user and give sudo
 RUN groupadd --gid ${USER_GID} ${USERNAME} \
-    && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} \
-    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+    && useradd --uid ${USER_UID} --gid ${USER_GID} --shell /bin/bash --create-home ${USERNAME} \
+    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers    
 
 CMD ["sleep", "infinity"]
